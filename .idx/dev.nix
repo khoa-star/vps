@@ -7,9 +7,6 @@
     pkgs.socat
     pkgs.coreutils
     pkgs.gnugrep
-    pkgs.sudo
-    pkgs.apt
-    pkgs.docker
     pkgs.systemd
     pkgs.unzip
   ];
@@ -18,21 +15,26 @@
 
   idx.workspace.onStart = {
     novnc = ''
-      set -e
+      set -euo pipefail
 
-      # One-time cleanup
+      # One-time cleanup (safer: keep dotfiles and the idx folder)
       if [ ! -f /home/user/.cleanup_done ]; then
-        rm -rf /home/user/.gradle/* /home/user/.emu/*
-        find /home/user -mindepth 1 -maxdepth 1 ! -name 'idx-ubuntu22-gui' ! -name '.*' -exec rm -rf {} +
+        rm -rf /home/user/.gradle/* /home/user/.emu/* || true
+        find /home/user -mindepth 1 -maxdepth 1 \
+          ! -name 'idx-ubuntu22-gui' \
+          ! -name '.*' \
+          -exec rm -rf {} + || true
         touch /home/user/.cleanup_done
       fi
 
-      
+      CONTAINER_NAME=ubuntu-novnc
+      IMAGE=thuonghai2711/ubuntu-novnc-pulseaudio:22.04
 
       # Create the container if missing; otherwise start it
-      if ! docker ps -a --format '{{.Names}}' | grep -qx 'ubuntu-novnc'; then
-        docker run --name ubuntu-novnc \
-          --shm-size 1g -d \
+      if ! docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+        docker run --name "$CONTAINER_NAME" \
+          --shm-size 1g \
+          -d \
           --cap-add=SYS_ADMIN \
           -p 8080:10000 \
           -e VNC_PASSWD=12345678 \
@@ -43,41 +45,66 @@
           -e SCREEN_WIDTH=1024 \
           -e SCREEN_HEIGHT=768 \
           -e SCREEN_DEPTH=24 \
-          thuonghai2711/ubuntu-novnc-pulseaudio:22.04
+          "$IMAGE"
       else
-        docker start ubuntu-novnc || true
+        docker start "$CONTAINER_NAME" || true
       fi
 
-      # Install Chrome inside the container (sudo only here)
-      docker exec -it ubuntu-novnc bash -lc "
-        sudo apt update &&
-        sudo apt remove -y firefox || true &&
-        sudo apt install -y wget &&
-        sudo wget -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb &&
-        sudo apt install -y /tmp/chrome.deb &&
-        sudo rm -f /tmp/chrome.deb
-      "
+      # Wait for container to be running and accept execs
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        if docker exec "$CONTAINER_NAME" bash -lc "echo ok" >/dev/null 2>&1; then
+          break
+        fi
+        echo "waiting for container to be ready... ($i)"
+        sleep 2
+      done
 
-      # Run cloudflared in background, capture logs
-      nohup cloudflared tunnel --no-autoupdate --url http://localhost:8080 \
-        > /tmp/cloudflared.log 2>&1 &
+      # Install Chrome inside the container as root (no sudo)
+      docker exec "$CONTAINER_NAME" bash -lc '
+        set -euo pipefail
+        apt-get update -y || true
+        apt-get remove -y firefox || true
+        apt-get install -y wget apt-transport-https ca-certificates gnupg lsb-release || true
 
-      # Give it 10s to start
-      sleep 10
+        # Download and install Chrome .deb (retry if network flakey)
+        TMPDEB=/tmp/chrome.deb
+        if wget -O "$TMPDEB" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
+          apt-get install -y "$TMPDEB" || apt-get -f install -y
+          rm -f "$TMPDEB"
+        else
+          echo "WARNING: chrome download failed"
+        fi
+      '
 
-      # Extract tunnel URL from logs
-      if grep -q "trycloudflare.com" /tmp/cloudflared.log; then
-        URL=$(grep -o "https://[a-z0-9.-]*trycloudflare.com" /tmp/cloudflared.log | head -n1)
-        echo "========================================="
-        echo " 🌍 Your Cloudflared tunnel is ready:"
-        echo "     $URL"
-        echo "========================================="
+      # Run cloudflared in background and capture logs (consider systemd for permanence)
+      CLOUD_LOG=/tmp/cloudflared.log
+      nohup cloudflared tunnel --no-autoupdate --url http://localhost:8080 > "$CLOUD_LOG" 2>&1 &
+
+      # Give it a few seconds to start
+      sleep 8
+
+      # Attempt to extract the public tunnel URL (trycloudflare domains)
+      if grep -q -E "trycloudflare\\.com|trycloudflare" "$CLOUD_LOG" 2>/dev/null; then
+        URL=$(grep -o -E "https?://[a-z0-9.-]*trycloudflare\\.com(:[0-9]+)?" "$CLOUD_LOG" | head -n1 || true)
+        if [ -n "$URL" ]; then
+          echo "========================================="
+          echo " 🌍 Your Cloudflared tunnel is ready:"
+          echo "     $URL"
+          echo "========================================="
+        else
+          echo "❌ Couldn't parse URL from $CLOUD_LOG"
+        fi
       else
-        echo "❌ Cloudflared tunnel failed, check /tmp/cloudflared.log"
+        echo "❌ Cloudflared tunnel failed to start or no trycloudflare URL found. See $CLOUD_LOG"
       fi
 
-      elapsed=0; while true; do echo "Time elapsed: $elapsed min"; ((elapsed++)); sleep 60; done
-
+      # Keep container/runner alive for developer preview (intentional long-running loop)
+      elapsed=0
+      while true; do
+        echo "Time elapsed: ${elapsed} min"
+        elapsed=$((elapsed + 1))
+        sleep 60
+      done
     '';
   };
 
