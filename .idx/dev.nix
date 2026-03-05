@@ -196,6 +196,7 @@ PYEOF
         -smp 4,cores=4 \
         -m 8192 \
         -M q35 \
+        -device qemu-xhci \
         -device usb-tablet \
         -vga virtio \
         -netdev user,id=n0,hostfwd=tcp::2222-:22 \
