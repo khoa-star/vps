@@ -89,9 +89,9 @@ def make_iso(output_path, files):
             f.write(pad(content, sectors_needed * SECTOR))
     print(f"ISO created: {output_path} ({os.path.getsize(output_path)} bytes)")
 
-meta_data = b"instance-id: ubuntu-qemu-01\nlocal-hostname: ubuntu-vm\n"
+meta_data = "instance-id: ubuntu-qemu-01\nlocal-hostname: ubuntu-vm\n".encode('utf-8')
 
-user_data = b"""#cloud-config
+user_data = """#cloud-config
 users:
   - name: ubuntu
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -119,18 +119,6 @@ packages:
   - libxdo3
   - gstreamer1.0-pipewire
 write_files:
-  - path: /home/ubuntu/start-desktop.sh
-    permissions: '0755'
-    content: |
-      #!/bin/bash
-      pkill Xvfb || true
-      pkill x11vnc || true
-      sleep 1
-      Xvfb :0 -screen 0 1280x800x24 &
-      sleep 3
-      DISPLAY=:0 dbus-launch --exit-with-session startxfce4 &
-      sleep 5
-      x11vnc -display :0 -rfbport 5900 -passwd ubuntu -forever -shared -bg -o /var/log/x11vnc.log
   - path: /etc/systemd/system/xvnc.service
     content: |
       [Unit]
@@ -139,7 +127,11 @@ write_files:
       [Service]
       User=ubuntu
       Environment=DISPLAY=:0
-      ExecStart=/home/ubuntu/start-desktop.sh
+      ExecStartPre=/bin/bash -c "pkill Xvfb || true"
+      ExecStartPre=/bin/bash -c "pkill x11vnc || true"
+      ExecStartPre=/bin/bash -c "Xvfb :0 -screen 0 1280x800x24 &"
+      ExecStartPre=/bin/sleep 3
+      ExecStart=/bin/bash -c "DISPLAY=:0 dbus-launch --exit-with-session startxfce4 & sleep 5 && x11vnc -display :0 -rfbport 5900 -passwd ubuntu -forever -shared -o /var/log/x11vnc.log"
       Restart=on-failure
       RestartSec=5
       [Install]
@@ -164,15 +156,12 @@ runcmd:
   - chown -R ubuntu:ubuntu /home/ubuntu
   - mkdir -p /home/ubuntu/.config/autostart
   - chown -R ubuntu:ubuntu /home/ubuntu/.config
-  # Cài RustDesk
   - wget -O /tmp/rustdesk.deb https://github.com/rustdesk/rustdesk/releases/download/1.4.5/rustdesk-1.4.5-x86_64.deb
-  - dpkg -i /tmp/rustdesk.deb || apt install -f -y
+  - dpkg -i /tmp/rustdesk.deb || true
   - apt install -f -y
-  # Enable services
   - systemctl enable xvnc.service
-  # Reboot để vào desktop tự động
   - reboot
-"""
+""".encode('utf-8')
 
 make_iso(os.environ['HOME'] + '/qemu/seed.iso', [
     ('meta-data', meta_data),
