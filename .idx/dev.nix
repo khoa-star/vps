@@ -43,14 +43,15 @@
         echo "Downloading Ubuntu 24.04 cloud image..."
         wget -O "$DISK" \
           https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
-        qemu-img resize "$DISK" 20G
+        echo "Resizing disk to 64G..."
+        qemu-img resize "$DISK" 64G
       else
         echo "Ubuntu disk exists, skipping."
       fi
 
       if [ ! -f "$SEED_ISO" ] || [ ! -s "$SEED_ISO" ]; then
         echo "Creating seed ISO..."
-        python3 /home/user/vps/make_seed.py
+        python3 /home/user/vps/main.py
         if [ -s "$SEED_ISO" ]; then
           echo "Seed ISO OK"
         else
@@ -72,8 +73,8 @@
       nohup qemu-system-x86_64 \
         -enable-kvm \
         -cpu host \
-        -smp 4,cores=4 \
-        -m 8192 \
+        -smp 8,cores=8 \
+        -m 16384 \
         -M q35 \
         -device qemu-xhci \
         -device usb-tablet \
@@ -86,7 +87,8 @@
         -display none \
         > /tmp/qemu.log 2>&1 &
 
-      sleep 5
+      echo "QEMU started. Waiting for VM to boot..."
+      sleep 10
 
       echo "Starting noVNC..."
       nohup "$NOVNC_DIR/utils/novnc_proxy" \
