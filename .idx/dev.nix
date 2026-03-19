@@ -16,7 +16,6 @@
     qemu = ''
       set -e
 
-      # 1. Dọn dẹp môi trường
       if [ ! -f /home/user/.cleanup_done ]; then
         echo "Cleaning up..."
         rm -rf /home/user/.gradle/* || true
@@ -40,7 +39,6 @@
 
       mkdir -p "$VM_DIR"
 
-      # 2. Chuẩn bị Disk Ubuntu
       if [ ! -f "$DISK" ]; then
         echo "Downloading Ubuntu 24.04 cloud image..."
         wget -O "$DISK" \
@@ -51,7 +49,6 @@
         echo "Ubuntu disk exists, skipping."
       fi
 
-      # 3. Tạo Seed ISO
       if [ ! -f "$SEED_ISO" ] || [ ! -s "$SEED_ISO" ]; then
         echo "Creating seed ISO..."
         python3 /home/user/vps/main.py
@@ -65,7 +62,6 @@
         echo "Seed ISO exists, skipping."
       fi
 
-      # 4. Tải noVNC
       if [ ! -d "$NOVNC_DIR/.git" ]; then
         echo "Cloning noVNC..."
         git clone https://github.com/novnc/noVNC.git "$NOVNC_DIR"
@@ -73,7 +69,6 @@
         echo "noVNC exists, skipping."
       fi
 
-      # 5. Khởi động QEMU
       echo "Starting QEMU..."
       nohup qemu-system-x86_64 \
         -enable-kvm \
@@ -95,14 +90,13 @@
       echo "QEMU started. Waiting for VM to boot..."
       sleep 10
 
-      # 6. Khởi động noVNC Proxy
       echo "Starting noVNC..."
       nohup "$NOVNC_DIR/utils/novnc_proxy" \
         --vnc 127.0.0.1:5900 \
         --listen 8888 \
         > /tmp/novnc.log 2>&1 &
 
-      # 7. Khởi động Cloudflared (FIX CHÍNH XÁC LINK)
+      # --- ĐOẠN ĐÃ FIX HOÀN TOÀN LOGIC LẤY LINK CLOUDFLARE ---
       echo "Starting Cloudflared..."
       rm -f /tmp/cloudflared.log
       nohup cloudflared tunnel \
@@ -110,20 +104,23 @@
         --url http://localhost:8888 \
         > /tmp/cloudflared.log 2>&1 &
 
-      echo "Waiting for Cloudflare Tunnel..."
+      echo "Waiting for Cloudflare Public Link..."
       
-      # Vòng lặp chờ link public xuất hiện (tối đa 40s)
-      for i in {1..40}; do
-        if grep -q "trycloudflare.com" /tmp/cloudflared.log && grep "trycloudflare.com" /tmp/cloudflared.log | grep -qv "api"; then
-          break
-        fi
-        sleep 1
-      done
-
-      if grep -q "trycloudflare.com" /tmp/cloudflared.log; then
-        # Lấy link: PHẢI CÓ trycloudflare VÀ KHÔNG ĐƯỢC CÓ api
+      URL=""
+      # Vòng lặp chờ 40 giây, mỗi 2 giây check log 1 lần
+      for i in {1..20}; do
+        # Lấy trực tiếp URL và ép lọc "api" ngay từ đầu
         URL=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/cloudflared.log | grep -v "api" | head -n1)
         
+        # Nếu biến URL không bị rỗng (tức là đã lấy được link chuẩn) -> thoát vòng lặp
+        if [ -n "$URL" ]; then
+          break
+        fi
+        sleep 2
+      done
+
+      # Kiểm tra lại lần cuối, nếu URL có giá trị thì in ra
+      if [ -n "$URL" ]; then
         echo "========================================="
         echo " Ubuntu Server + XFCE ready:"
         echo " Link noVNC: $URL/vnc.html"
@@ -134,8 +131,10 @@
         mkdir -p /home/user/vps
         echo "$URL/vnc.html" > /home/user/vps/noVNC-URL.txt
       else
-        echo "Cloudflared failed. Check /tmp/cloudflared.log"
+        echo "LỖI: Không lấy được link Cloudflare. Log chi tiết:"
+        cat /tmp/cloudflared.log
       fi
+      # --------------------------------------------------------
 
       elapsed=0
       while true; do
