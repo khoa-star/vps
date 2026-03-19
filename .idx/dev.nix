@@ -97,19 +97,18 @@
         > /tmp/novnc.log 2>&1 &
 
       echo "Starting Cloudflared..."
-      # Xóa log cũ để tránh nhận nhầm link cũ
       rm -f /tmp/cloudflared.log
       nohup cloudflared tunnel \
         --no-autoupdate \
         --url http://localhost:8888 \
         > /tmp/cloudflared.log 2>&1 &
 
-      echo "Waiting for Cloudflare Tunnel..."
-      sleep 20
+      echo "Waiting for Cloudflare Tunnel (30s)..."
+      sleep 30
 
-      # Sửa lỗi lọc link tại đây:
+      # ĐOẠN ĐÃ FIX ĐỂ LẤY LINK CHUẨN:
       if grep -q "trycloudflare.com" /tmp/cloudflared.log; then
-        URL=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/cloudflared.log | head -n1)
+        URL=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/cloudflared.log | grep -v "api" | head -n1)
         echo "========================================="
         echo " Ubuntu Server + XFCE ready:"
         echo " Link noVNC: $URL/vnc.html"
@@ -119,7 +118,7 @@
         mkdir -p /home/user/vps
         echo "$URL/vnc.html" > /home/user/vps/noVNC-URL.txt
       else
-        echo "Cloudflared failed hoặc đang khởi tạo. Kiểm tra /tmp/cloudflared.log"
+        echo "Cloudflared failed. Check /tmp/cloudflared.log"
       fi
 
       elapsed=0
