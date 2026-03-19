@@ -4,7 +4,7 @@
   packages = [
     pkgs.qemu
     pkgs.htop
-    pkgs.cloudflared
+    pkgs.bore-cli
     pkgs.coreutils
     pkgs.gnugrep
     pkgs.wget
@@ -16,6 +16,7 @@
     qemu = ''
       set -e
 
+      # 1. Dọn dẹp môi trường cũ
       if [ ! -f /home/user/.cleanup_done ]; then
         echo "Cleaning up..."
         rm -rf /home/user/.gradle/* || true
@@ -39,6 +40,7 @@
 
       mkdir -p "$VM_DIR"
 
+      # 2. Tải và chuẩn bị ổ đĩa Ubuntu
       if [ ! -f "$DISK" ]; then
         echo "Downloading Ubuntu 24.04 cloud image..."
         wget -O "$DISK" \
@@ -49,6 +51,7 @@
         echo "Ubuntu disk exists, skipping."
       fi
 
+      # 3. Tạo file ISO Cloud-Init (Seed ISO)
       if [ ! -f "$SEED_ISO" ] || [ ! -s "$SEED_ISO" ]; then
         echo "Creating seed ISO..."
         python3 /home/user/vps/main.py
@@ -62,6 +65,7 @@
         echo "Seed ISO exists, skipping."
       fi
 
+      # 4. Cài đặt noVNC nếu chưa có
       if [ ! -d "$NOVNC_DIR/.git" ]; then
         echo "Cloning noVNC..."
         git clone https://github.com/novnc/noVNC.git "$NOVNC_DIR"
@@ -69,6 +73,7 @@
         echo "noVNC exists, skipping."
       fi
 
+      # 5. Khởi động QEMU (Máy ảo Ubuntu)
       echo "Starting QEMU..."
       nohup qemu-system-x86_64 \
         -enable-kvm \
@@ -90,37 +95,41 @@
       echo "QEMU started. Waiting for VM to boot..."
       sleep 10
 
+      # 6. Khởi động noVNC Proxy (Cổng 8888)
       echo "Starting noVNC..."
       nohup "$NOVNC_DIR/utils/novnc_proxy" \
         --vnc 127.0.0.1:5900 \
         --listen 8888 \
         > /tmp/novnc.log 2>&1 &
 
-      echo "Starting Cloudflared..."
-      rm -f /tmp/cloudflared.log
-      nohup cloudflared tunnel \
-        --no-autoupdate \
-        --url http://localhost:8888 \
-        > /tmp/cloudflared.log 2>&1 &
+      # 7. Khởi động Bore Tunnel (Thay thế Cloudflare)
+      echo "Starting Bore Tunnel..."
+      rm -f /tmp/bore.log
+      nohup bore local 8888 --to bore.pub > /tmp/bore.log 2>&1 &
 
-      echo "Waiting for Cloudflare Tunnel (30s)..."
-      sleep 30
+      echo "Waiting for Bore to provide port..."
+      sleep 10
 
-      # ĐOẠN ĐÃ FIX ĐỂ LẤY LINK CHUẨN:
-      if grep -q "trycloudflare.com" /tmp/cloudflared.log; then
-        URL=$(grep -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/cloudflared.log | grep -v "api" | head -n1)
+      # Lấy Port từ log của Bore
+      if grep -q "remote_port" /tmp/bore.log; then
+        REMOTE_PORT=$(grep -oP 'remote_port=\K\d+' /tmp/bore.log)
+        URL="http://bore.pub:$REMOTE_PORT"
+        
         echo "========================================="
-        echo " Ubuntu Server + XFCE ready:"
+        echo " Ubuntu Server + XFCE ready via BORE:"
         echo " Link noVNC: $URL/vnc.html"
         echo " VNC Password: ubuntu"
         echo " SSH: ssh -p 2222 ubuntu@localhost"
         echo "========================================="
+        
         mkdir -p /home/user/vps
         echo "$URL/vnc.html" > /home/user/vps/noVNC-URL.txt
+        echo "URL saved to ~/vps/noVNC-URL.txt"
       else
-        echo "Cloudflared failed. Check /tmp/cloudflared.log"
+        echo "Bore failed. Check /tmp/bore.log"
       fi
 
+      # Vòng lặp giữ script chạy
       elapsed=0
       while true; do
         echo "Time elapsed: $elapsed min | QEMU: $(pgrep qemu-system > /dev/null && echo running || echo STOPPED)"
